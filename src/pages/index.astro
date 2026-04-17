@@ -1,17 +1,175 @@
 ---
+const TAX_SYSTEMS: Record<string, any> = {
+  ID: {
+    name: "Indonesia (PPh 21 - Personal)",
+    currency: "IDR",
+    locale: "id-ID",
+    brackets: [
+      { limit: 60000000, rate: 0.05 },
+      { limit: 250000000, rate: 0.15 },
+      { limit: 500000000, rate: 0.25 },
+      { limit: 5000000000, rate: 0.3 },
+      { limit: Infinity, rate: 0.35 },
+    ],
+  },
+  ID_NPPN: {
+    name: "Indonesia (PPh 21 - Freelance NPPN 50%)",
+    currency: "IDR",
+    locale: "id-ID",
+    isNPPN: true,
+    nppnRate: 0.5,
+    maxGross: 4800000000,
+    brackets: [
+      { limit: 60000000, rate: 0.05 },
+      { limit: 250000000, rate: 0.15 },
+      { limit: 500000000, rate: 0.25 },
+      { limit: 5000000000, rate: 0.3 },
+      { limit: Infinity, rate: 0.35 },
+    ],
+  },
+  US: {
+    name: "USA (Federal Income Tax - Single Filer 2024)",
+    currency: "USD",
+    locale: "en-US",
+    brackets: [
+      { limit: 11600, rate: 0.1 },
+      { limit: 47150, rate: 0.12 },
+      { limit: 100525, rate: 0.22 },
+      { limit: 191950, rate: 0.24 },
+      { limit: 243725, rate: 0.32 },
+      { limit: 609350, rate: 0.35 },
+      { limit: Infinity, rate: 0.37 },
+    ],
+  },
+};
 
+// 1. Get Search Params from the URL
+const { searchParams } = Astro.url;
+const type = searchParams.get("type") || "ID";
+const amountParam = searchParams.get("amount");
+const amount = parseFloat(amountParam?.replace(/[^0-9.]/g, "") || "0");
+
+const selectedSystem = TAX_SYSTEMS[type] || TAX_SYSTEMS.ID;
+const formatter = new Intl.NumberFormat(selectedSystem.locale, {
+  style: "currency",
+  currency: selectedSystem.currency,
+});
+
+// 2. Calculation Logic (Runs on Server)
+let result = null;
+let error = null;
+
+if (amountParam !== null) {
+  try {
+    let brackets = selectedSystem.brackets;
+    if (selectedSystem.isNPPN) {
+      brackets = brackets.map((b: any) => ({
+        limit: b.limit === Infinity ? Infinity : b.limit / selectedSystem.nppnRate,
+        rate: b.rate * selectedSystem.nppnRate,
+      }));
+    }
+
+    let preTaxIncome = 0;
+    let previousLimit = 0;
+    let remainingAfterTax = amount;
+
+    for (let i = 0; i < brackets.length; i++) {
+      const { limit, rate } = brackets[i];
+      const netRate = 1 - rate;
+      const bracketRange = limit - previousLimit;
+      const bracketNetContribution = limit === Infinity ? Infinity : bracketRange * netRate;
+
+      if (remainingAfterTax <= bracketNetContribution + 1e-9 || limit === Infinity) {
+        preTaxIncome += remainingAfterTax / netRate;
+        if (selectedSystem.isNPPN && preTaxIncome > selectedSystem.maxGross) {
+          throw new Error(`Exceeds NPPN limit of ${formatter.format(selectedSystem.maxGross)}`);
+        }
+        result = preTaxIncome;
+        break;
+      } else {
+        preTaxIncome += bracketRange;
+        remainingAfterTax -= bracketNetContribution;
+        previousLimit = limit;
+      }
+    }
+  } catch (e: any) {
+    error = e.message;
+  }
+}
 ---
 
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pre-Tax Income Calculator</title>
+    <meta property="og:title" content="Pre-Tax Income Calculator" />
+    <meta property="og:type" content="article" />
+    <meta
+      property="og:description"
+      content="This is a simple calculator that calculates how much the pre tax income amount needed to generate n amount of after-tax income. There's so many income tax calculators out there already, but not many of them provide a simple and deterministic way to calculate pre-tax income. Hope this app helps your financial planning."
+    />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/alfathmuqoddas/pretax-calculator/main/thumbnail.png"
+    />
+    <meta
+      property="og:url"
+      content="https://alfathmuqoddas.github.io/pretax-calculator"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="https://fav.farm/💲" />
+    <title>Astro Pre-tax Calculator</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; padding: 1rem; line-height: 1.5; }
+      .card { border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px; background: #fafafa; }
+      .result-box { margin-top: 1rem; padding: 1rem; background: #e0f2fe; border-left: 5px solid #0ea5e9; }
+      .error-box { margin-top: 1rem; padding: 1rem; background: #fee2e2; border-left: 5px solid #ef4444; }
+      form { display: flex; flex-direction: column; gap: 1rem; }
+      input, select, button { padding: 0.5rem; font-size: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Pre-tax Calculator (SSR)</h1>
+    
+    <div class="card">
+      <form method="GET">
+        <div>
+          <label for="type">Tax System:</label><br/>
+          <select name="type" id="type">
+            {Object.entries(TAX_SYSTEMS).map(([key, sys]) => (
+              <option value={key} selected={type === key}>{sys.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label for="amount">Target After-Tax Income:</label><br/>
+          <input 
+            type="number" 
+            name="amount" 
+            id="amount" 
+            value={amount || ""} 
+            placeholder="e.g. 50000" 
+            required 
+          />
+        </div>
+
+        <button type="submit">Calculate on Server</button>
+      </form>
+
+      {error && <div class="error-box"><strong>Error:</strong> {error}</div>}
+
+      {result !== null && !error && (
+        <div class="result-box">
+          <strong>Results for {selectedSystem.name}:</strong><br />
+          Target: {formatter.format(amount)}<br />
+          <strong>Required Pre-Tax: {formatter.format(result)}</strong>
+        </div>
+      )}
+    </div>
+
+    <p><small>Note: This page reloads and calculates on the Cloudflare Edge network via SSR.</small></p>
+  </body>
 </html>
