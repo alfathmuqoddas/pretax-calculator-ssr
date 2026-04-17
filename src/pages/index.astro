@@ -96,6 +96,8 @@ if (amountParam !== null) {
     error = e.message;
   }
 }
+
+const year = new Date().getFullYear();
 ---
 
 <html lang="en">
@@ -171,5 +173,6 @@ if (amountParam !== null) {
     </div>
 
     <p><small>Note: This page reloads and calculates on the Cloudflare Edge network via SSR.</small></p>
+    <p><small>&copy; {year} made with ❤️ by <a href="https://alfathmuqoddas.github.io">Alfath Muqoddas</a></small></p>
   </body>
 </html>
